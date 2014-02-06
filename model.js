@@ -9,12 +9,13 @@ var inCritical = false;
 var criticalTime = 2500;
 var criticalTimeoutId = 0;
 var okCounter = Infinity;
+var okNodes = [];
 
 exports.ip = "127.0.0.1";
 exports.port = 8000;
 exports.eventManager = new events.EventEmitter();
 exports.criticalTask = function() {
-  console.log('Sekcja krytyczna');
+  console.log('\x1b[34;1mEntering section');
 };
 var eventManager = exports.eventManager;
 
@@ -23,34 +24,51 @@ eventManager.on('data', function(params) {
   var sender = params.getSender();
   switch (params.data.type) {
     case 'order':
-      //console.log('order: ' + sender.ip + ':' + sender.port);
       var sendOk = true;
       if (inCritical) {
+        console.log('Deferring ' + params.getSender().ip);
         queue.push(params);
         sendOk = false;
       }
       if (ordering) {
         if (Number(params.data.clock) > clock) {
           sendOk = false;
+          console.log('Deferring ' + params.getSender().ip);
           queue.push(params);
-          console.log(clock + '\t' + params.data.clock + ' queue');
         }
         if (Number(params.data.clock) == clock) {
           var sender = params.getSender();
           if (exports.compareAddresses(sender.ip, sender.port, exports.ip, exports.port) == -1) {
             sendOk = false;
+            console.log('Deferring ' + params.getSender().ip);
+            queue.push(params);
           }
         }
       }
       if (sendOk === true) {
-        console.log(clock + '\t' + params.data.clock + '\tyield: ' + sender.ip + ':' + sender.port);
-        params.send(JSON.stringify({clock: clock, type: "ok" }));
+        debugger;
+        var node = nodes.filter(function(n) { console.log(n.remoteAddress); return n.remoteAddress == sender.ip; })[0];
+        if (node) {
+          console.log('Sending message to: ' + node.remoteAddress + "\n" + JSON.stringify({clock: clock, type: "ok" }));
+          node.write(JSON.stringify({clock: clock, type: "ok" }));
+        } else {
+          console.log('trouble: ' + sender.ip + ' ' + sender.port + ' ' + sender.lip + ' ' + sender.lp);
+        }
       }
     break;
     case 'ok':
       okCounter--;
-      console.log('collecting: ' + sender.ip + ':' + sender.port + ', counter:' + okCounter);
-      if (okCounter <= 0) {
+      okNodes.splice(okNodes.indexOf(params.getSender().ip),1);
+      var log = 'Waiting for:';
+      okNodes.forEach(function(node) {
+        log += ' ' + node;
+      });
+      if (okNodes.length > 0) {
+        console.log(log);
+      } else {
+        console.log(log + ' nobody');
+      }
+      if (okNodes.length == 0) {
         clearTimeout(criticalTimeoutId);
         inCritical = true;
         ordering = false;
@@ -77,15 +95,16 @@ eventManager.on('requestCritical', function() {
     return;
   clock++;
   okCounter = nodes.length;
-  console.log('counter: ' + okCounter);
   ordering = true;
-  console.log(clock + '\tProsba o wejscie do sekcji...');
+  okNodes = [];
   nodes.forEach(function(node) {
+    okNodes.push(node.remoteAddress);
+    console.log('Sending message to: ' + node.remoteAddress + "\n" + JSON.stringify({clock: clock, type: "order"}));
     node.write(JSON.stringify({clock: clock, type: "order"}));
   });
+
   clearTimeout(criticalTimeoutId);
   criticalTimeoutId = setTimeout(function() {
-    console.log('Albo nieważne...');
     okCounter = Infinity;
     ordering = false;
   }, criticalTime * (nodes.length + 1) );
@@ -93,6 +112,7 @@ eventManager.on('requestCritical', function() {
 
 
 eventManager.on('releaseQueue', function() {
+  console.log('Leaving section\x1b[0m');
   queue.forEach(function(item) {
     eventManager.emit('data', item);
   });

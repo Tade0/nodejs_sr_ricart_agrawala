@@ -2,6 +2,7 @@ var net = require('net');
 var cli = require('./cli.js');
 var model = require('./model.js');
 var eventManager = model.eventManager;
+var inputBuffers = {};
 
 if (cli.port) {
   model.port = cli.portNum;
@@ -9,36 +10,33 @@ if (cli.port) {
 
 function main() {
   server = net.createServer(function(socket) {
-    //model.nodes.push(socket);
     var remoteAddress = socket.remoteAddress +':' + socket.remotePort;
     //eventManager.emit('addNode', {ip: socket.remoteAddress, port: socket.remotePort});
-
     socket.on('data', function(json) {
-      json = correctJSON(json.toString());
-      ////console.log(json + ' ' + socket.remoteAddress + ':' + socket.remotePort);
+      console.log('Received message from: ' + socket.remoteAddress + "\n" + json);
+      json = correctJSON(json.toString(), socket.remoteAddress );
       json.forEach(function(jsonData) {
         var data = JSON.parse(jsonData);
         eventManager.emit('data', {
           data: data,
           send: function(data) {
+            console.log('Sending message to: ' + socket.remoteAddress + "\n" + data);
             socket.write(data);
           },
           getSender: function() {
-            return {ip: socket.remoteAddress, port: socket.remotePort};
+            return {lip: socket.localAddress, ip: socket.remoteAddress, port: socket.remotePort, lp: socket.localPort};
           }
         });
       });
     });
     
     socket.on('error', function(e) {
-      console.log(remoteAddress + ' disconnected');
     });
 
   });
 
   server.on('error', function(e) {
 		if (e.code == 'EADDRINUSE') {
-			//console.log('\x1b[33;1mAddress in use, retrying...\x1b[0m');
 			model.port++;
       setTimeout(function () {
 				server.listen(model.port);
@@ -46,30 +44,26 @@ function main() {
 		}
 	});
 
-
-  server.on('listening', function() { //'listening' listener
-    //console.log('Address: ' + model.ip + ':' + model.port);
-    //console.log('Listening...');
+  server.on('listening', function() {
 
     if (cli.connect) {
       var connect = function(addr, index) {
         var socket = new net.Socket();
-        //console.log('Connecting: ' + addr + ':' + cli.connectPort[index]);
         socket.connect(cli.connectPort[index], addr, function() {
           model.nodes.push(socket);
-          //console.log('Connected: ' + addr + ':' + cli.connectPort[index]);
           socket.on('data', function(json) {
-            json = correctJSON(json.toString());
-            ////console.log(json + ' ' + socket.remoteAddress + ':' + socket.remotePort);
+            console.log('Received message from: ' + socket.remoteAddress + "\n" + json);
+            json = correctJSON(json.toString(), socket.remoteAddress);
             json.forEach(function(jsonData) {
               var data = JSON.parse(jsonData);
               eventManager.emit('data', {
                 data: data,
                 send: function(data) {
+                  console.log('Sending message to: ' + socket.remoteAddress + "\n" + data);
                   socket.write(data);
                 },
                 getSender: function() {
-                  return {ip: socket.remoteAddress, port: socket.remotePort};
+                  return {lip: socket.localAddress, ip: socket.remoteAddress, port: socket.remotePort, lp: socket.localPort};
                 }
               });
             });
@@ -79,8 +73,6 @@ function main() {
         socket.on('error', function(e) {
           if (model.nodes.indexOf(socket) != -1)
             model.nodes.splice(model.nodes.indexOf(socket), 1);
-          //console.log(e);
-          console.log('Ponawianie...');
           setTimeout(function() {connect(addr, index); }, 1500 + Math.random()*5000);
         });
       }
@@ -92,13 +84,28 @@ function main() {
         eventManager.emit('requestCritical');
       }, (Math.random()*0.5+0.5)*cli.reqInterval);
     }
-  
   });
-  server.listen(cli.portNum);
+
+  if (cli.address) {
+    server.listen(cli.portNum, cli.address);
+  } else {
+    server.listen(cli.portNum);
+  }
 }
 
+function correctJSON(json, address) {
+  if (!inputBuffers[address])
+    inputBuffers[address] = '';
+  inputBuffers[address] += json;
+  var match = inputBuffers[address].search('}');
+  if ( match != -1 /*.match(/\{[^.\n]*\}/g)*/ ) {
+    match = inputBuffers[address].substr(0, match + 1);
+    inputBuffers[address] = inputBuffers[address].substr(match.length);
+    return [match];
+  } else {
+    return [];
+  }
 
-function correctJSON(json) {
   var result = [];
   if ( json.search("}{") > -1 )
   {

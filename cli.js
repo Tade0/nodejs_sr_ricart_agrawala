@@ -1,4 +1,5 @@
 args = process.argv.slice(2);
+exports.address = '';
 exports.port = false;
 exports.portNum = 8080;
 
@@ -25,6 +26,11 @@ while (i < args.length)
       break;
       case 'name':
         exports.name = args[i+1];
+      break;
+      case 'address':
+        exports.address = args[i+1];
+        i++;
+      break;
     }
   }
 
